@@ -10,28 +10,35 @@
 #include <memory>
 #include <chrono>
 
-auto model = torch::jit::load(std::getenv("DS_TSC_PTH_PATH"));
-
-const size_t numStreams = 3;
+/* auto model = torch::jit::load(std::getenv("DS_TSC_PTH_PATH")); */
+/* const size_t numStreams = 3; */
 
 
 size_t ppm_save(const at::Tensor& image_chw, const std::string& filename) {
     FILE* outfile = fopen(filename.c_str(), "w");
-
     at::Tensor bytes_hwc = image_chw.permute({1, 2, 0}).to(torch::kCPU, torch::kUInt8, false, true).contiguous();
     unsigned int height = bytes_hwc.sizes()[0], width = bytes_hwc.sizes()[1];
-
     size_t n = 0;
     n += fprintf(outfile, "P6\n# THIS IS A COMMENT\n%d %d\n%d\n", width, height, 0xFF);
     n += fwrite((uint8_t*)bytes_hwc.data_ptr(), 1, width * height * 3, outfile);
-
     fclose(outfile);
     return n;
 }
 
+struct DeviceState {
+    uint32_t bufferCount = 0;
+    uint32_t profileFrameCount = 0;
+    std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
+    torch::Device device = torch::kCPU;
+    torch::ScalarType sourceType = torch::kFloat32;
+    at::cuda::CUDAStream stream = at::cuda::getStreamFromPool();
+    torch::jit::script::Module model;
+};
+
 
 extern "C"
 bool DsTrtTscBridgeDevice(
+    uint32_t gpuId,
     std::vector<std::vector<NvDsInferLayerInfo>> const &batchOutputLayersInfo,
     NvDsInferNetworkInfo const &networkInfo,
     NvDsInferParseDetectionParams const &detectionParams,
@@ -40,47 +47,45 @@ bool DsTrtTscBridgeDevice(
 
 extern "C"
 bool DsTrtTscBridgeDevice(
+    uint32_t gpuId,
     std::vector<std::vector<NvDsInferLayerInfo>> const &batchOutputLayersInfo,
     NvDsInferNetworkInfo const &networkInfo,
     NvDsInferParseDetectionParams const &detectionParams,
     std::vector<std::vector<NvDsInferObjectDetectionInfo>> &batchObjectList
 ) {
-    static size_t outputLayerIndex = -1;
+    const size_t outputLayerIndex = 0;
     const uint32_t fpsFramePeriod = 128;
-    static uint32_t bufferCount = 0, profileFrameCount = 0;
-    static torch::ScalarType sourceType = torch::kFloat32;
 
-    static std::vector<at::cuda::CUDAStream> cudaStreams;
-    while(cudaStreams.size() < numStreams) {
-        cudaStreams.emplace_back(at::cuda::getStreamFromPool());
+    static std::vector<DeviceState> deviceState(4);
+
+    DeviceState& state = deviceState[gpuId];
+    auto& layer = batchOutputLayersInfo[0][outputLayerIndex];
+
+    if(state.device == torch::Device(torch::kCPU)) {
+        state.device = torch::Device(torch::kCUDA, gpuId);
+        /* state.stream = at::cuda::getStreamFromPool(); */
+        state.model = torch::jit::load(std::getenv("DS_TSC_PTH_PATH"));
+        state.model.to(state.device);
+        state.start = std::chrono::system_clock::now();
+
+        state.sourceType = torch::kFloat32;
+        if(layer.dataType == NvDsInferDataType::HALF) {
+            state.sourceType = torch::kFloat16;
+        } else if(layer.dataType == NvDsInferDataType::INT8) {
+            state.sourceType = torch::kUInt8;
+        }
     }
 
-    static auto start = std::chrono::system_clock::now();
-    if(bufferCount == 5) {
-        start = std::chrono::system_clock::now();
-        profileFrameCount = 0;
+    if(state.bufferCount == 5) {
+        state.start = std::chrono::system_clock::now();
+        state.profileFrameCount = 0;
     }
 
-    at::cuda::CUDAStreamGuard streamGuard(cudaStreams[bufferCount % cudaStreams.size()]);
+    at::cuda::CUDAStreamGuard streamGuard(state.stream);
     nvtxRangePushA("setup");
 
     unsigned int batchDim = batchOutputLayersInfo.size();
 
-    if(outputLayerIndex == -1 && batchDim > 0) {
-        model.to(torch::kCUDA);
-
-        outputLayerIndex = 0;
-        auto& layer = batchOutputLayersInfo[0][outputLayerIndex];
-
-        sourceType = torch::kFloat32;
-        if(layer.dataType == NvDsInferDataType::HALF) {
-            sourceType = torch::kFloat16;
-        } else if(layer.dataType == NvDsInferDataType::INT8) {
-            sourceType = torch::kUInt8;
-        }
-    }
-
-    auto& layer = batchOutputLayersInfo[0][outputLayerIndex];
     std::vector<int64_t> dims;
     for(unsigned int d = 0; d < layer.inferDims.numDims; ++d) dims.push_back(layer.inferDims.d[d]);
 
@@ -93,10 +98,10 @@ bool DsTrtTscBridgeDevice(
     at::Tensor source_nchw = torch::from_blob(
         layer.buffer,
         c10::IntArrayRef(dims),
-        at::device(torch::kCUDA).dtype(sourceType)
+        torch::dtype(state.sourceType).device(state.device)
     );
 
-    at::Tensor batch_nchw = source_nchw.to(torch::kCUDA, torch::kFloat32, false, true).contiguous();
+    at::Tensor batch_nchw = source_nchw.to(state.device, torch::kFloat32, false, true).contiguous();
 
     nvtxRangePop(); // setup
 
@@ -110,22 +115,22 @@ bool DsTrtTscBridgeDevice(
 /*         } */
 
     nvtxRangePushA("inference");
-    auto result = model.forward(
+    auto result = state.model.forward(
         std::vector<torch::jit::IValue>({batch_nchw})
     ).toTuple();
     nvtxRangePop(); // inference
 
-    std::cout << "[" << bufferCount << "]:\tdetections: " << result->elements()[0].toTensor().sizes()[0] << "\n";
+    std::cout << "[" << state.bufferCount << "]:\tdetections: " << result->elements()[0].toTensor().sizes()[0] << "\n";
 
-    if(profileFrameCount >= fpsFramePeriod) {
-        std::chrono::duration<double> elapsed_s = std::chrono::system_clock::now() - start;
-        std::cout << profileFrameCount / elapsed_s.count() << " FPS\n";
-        profileFrameCount = 0;
-        start = std::chrono::system_clock::now();
+    if(state.profileFrameCount >= fpsFramePeriod) {
+        std::chrono::duration<double> elapsed_s = std::chrono::system_clock::now() - state.start;
+        std::cout << state.profileFrameCount / elapsed_s.count() << " FPS\n";
+        state.profileFrameCount = 0;
+        state.start = std::chrono::system_clock::now();
     }
 
-    bufferCount += 1;
-    profileFrameCount += batchDim;
+    state.bufferCount += 1;
+    state.profileFrameCount += batchDim;
     return true;
 }
 

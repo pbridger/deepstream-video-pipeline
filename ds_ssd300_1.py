@@ -48,7 +48,6 @@ class SSD300(torch.nn.Module):
         self.dboxes_xywh = init_dboxes(device, self.model_dtype).unsqueeze(dim=0)
         self.scale_xy = 0.1
         self.scale_wh = 0.2
-        self.inference_dims = torch.tensor([300, 300], device=device)
 
     def preprocess(self, image_nchw):
         '300x300 centre crop and normalize'
@@ -61,7 +60,7 @@ class SSD300(torch.nn.Module):
         source_y_offset = max(0, (image_height - 300) // 2)
 
         image_nchw = image_nchw.to(self.model_dtype)
-        input_nchw = torch.zeros((batch_dim, 3, 300, 300), dtype=self.model_dtype, device=self.device)
+        input_nchw = torch.zeros((batch_dim, 3, 300, 300), dtype=self.model_dtype, device=image_nchw.device)
         input_nchw[:, :, dest_y_offset:dest_y_offset + copy_y, dest_x_offset:dest_x_offset + copy_x] = \
             image_nchw[:, :, source_y_offset:source_y_offset + copy_y, source_x_offset:source_x_offset + copy_x]
 

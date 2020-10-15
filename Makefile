@@ -64,17 +64,27 @@ build/libds_trt_tsc_bridge.so: build/Makefile ds_trt_tsc_bridge.cpp
 
 
 run_pipeline_%: checkpoints/ds_tsc_%.tsc.pth checkpoints/ds_trt_%.engine build/libds_trt_tsc_bridge.so
-	DS_TSC_PTH_PATH="$<" \
-    gst-launch-1.0 nvstreammux name=mux width=384 height=288 batch-size=16 batched-push-timeout=1000000 ! \
-    nvinfer config-file-path=detector.config ! fakesink \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_0 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_1 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_2 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_3 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_4 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_5 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_6 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_7
+	DS_TSC_PTH_PATH="$<" gst-launch-1.0 \
+    nvstreammux name=mux gpu-id=0 width=384 height=288 batch-size=16 batched-push-timeout=1000000 ! \
+    nvinfer config-file-path=detector.config gpu-id=0 ! fakesink \
+    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux.sink_0 \
+    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux.sink_1 \
+    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux.sink_2 \
+    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux.sink_3 \
+    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux.sink_4 \
+    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux.sink_5 \
+    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux.sink_6 \
+    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux.sink_7 \
+	nvstreammux name=mux2 gpu-id=1 width=384 height=288 batch-size=16 batched-push-timeout=1000000 ! \
+    nvinfer config-file-path=detector.config gpu-id=1 ! fakesink \
+    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux2.sink_0 \
+    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux2.sink_1 \
+    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux2.sink_2 \
+    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux2.sink_3 \
+    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux2.sink_4 \
+    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux2.sink_5 \
+    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux2.sink_6 \
+    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux2.sink_7
 
 
 debug_pipeline_%: checkpoints/ds_tsc_%.tsc.pth checkpoints/ds_trt_%.engine build/libds_trt_tsc_bridge.so
@@ -89,7 +99,6 @@ debug_pipeline_%: checkpoints/ds_tsc_%.tsc.pth checkpoints/ds_trt_%.engine build
     filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_5 \
     filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_6 \
     filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_7
-
 
 logs/ds_trt_tsc_%.qdrep: checkpoints/ds_tsc_%.tsc.pth checkpoints/ds_trt_%.engine build/libds_trt_tsc_bridge.so
 	DS_TSC_PTH_PATH="$<" nsys ${PROFILE_CMD} -o $@ \

@@ -27,7 +27,7 @@ if __name__ =='__main__':
 
     dest_path = f'checkpoints/{args.tsc_module_name}.tsc.pth'
 
-    device = torch.device(args.device)
+    device = torch.device('cuda:0')
 
     threshold = 0.4
     model_precision = 'fp16'
@@ -43,8 +43,17 @@ if __name__ =='__main__':
     torchscript_model(intermediate_result)
 
     with torch.jit.optimized_execution(should_optimize=True):
-        torch.jit.trace(
+        traced_module = torch.jit.trace(
             torchscript_model,
             intermediate_result,
-        ).save(dest_path)
+        )
+        traced_module.save(dest_path)
+
+        print('sanity output:')
+        print(traced_module(intermediate_result))
+        print('device independence:')
+        traced_module = traced_module.to(torch.device('cuda:1'))
+        print(traced_module.parameters())
+        # intermediate_result = intermediate_result.to(torch.device('cuda:1'))
+        # print(traced_module(intermediate_result))
 
