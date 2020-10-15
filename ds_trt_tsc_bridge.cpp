@@ -47,10 +47,8 @@ bool DsTrtTscBridgeDevice(
 ) {
     static size_t outputLayerIndex = -1;
     const uint32_t fpsFramePeriod = 128;
-    static uint32_t bufferCount = 0, profileFrameCount = 0, nextFpsFrameCount = fpsFramePeriod;
+    static uint32_t bufferCount = 0, profileFrameCount = 0;
     static torch::ScalarType sourceType = torch::kFloat32;
-
-    std::cout << "[" << bufferCount << "]\n";
 
     static std::vector<at::cuda::CUDAStream> cudaStreams;
     while(cudaStreams.size() < numStreams) {
@@ -67,10 +65,8 @@ bool DsTrtTscBridgeDevice(
     nvtxRangePushA("setup");
 
     unsigned int batchDim = batchOutputLayersInfo.size();
-    std::cout << "batch size: " << batchDim << "\n";
 
     if(outputLayerIndex == -1 && batchDim > 0) {
-        std::cout << "Moving model to device\n";
         model.to(torch::kCUDA);
 
         outputLayerIndex = 0;
@@ -87,7 +83,6 @@ bool DsTrtTscBridgeDevice(
     auto& layer = batchOutputLayersInfo[0][outputLayerIndex];
     std::vector<int64_t> dims;
     for(unsigned int d = 0; d < layer.inferDims.numDims; ++d) dims.push_back(layer.inferDims.d[d]);
-    std::cout << "dims: " << dims << "\n";
 
     if(dims[0] != batchDim) {
         nvtxRangePop(); // setup
@@ -98,12 +93,21 @@ bool DsTrtTscBridgeDevice(
     at::Tensor source_nchw = torch::from_blob(
         layer.buffer,
         c10::IntArrayRef(dims),
-        at::dtype(sourceType)
+        at::device(torch::kCUDA).dtype(sourceType)
     );
 
     at::Tensor batch_nchw = source_nchw.to(torch::kCUDA, torch::kFloat32, false, true).contiguous();
 
     nvtxRangePop(); // setup
+
+/*         if(bufferCount == 57) { */
+/*             at::Tensor batch_cpu = batch_nchw.to(torch::kCPU); */
+/*             /1* std::cout << "batch bytes min/max/mean:\n" << batch_cpu.min() << "\n" << batch_cpu.max() << "\n" << batch_cpu.to(torch::kFloat32).mean() << "\n"; *1/ */
+/*             /1* std::cout << batch_cpu.sizes() << "\n"; *1/ */
+/*             for(unsigned int i = 0; i < batch_cpu.sizes()[0]; ++i) { */
+/*                 ppm_save(batch_cpu.slice(0, i, i + 1).squeeze(0), "logs/test_" + std::to_string(bufferCount) + "_" + std::to_string(i) + ".ppm"); */
+/*             } */
+/*         } */
 
     nvtxRangePushA("inference");
     auto result = model.forward(
@@ -113,10 +117,11 @@ bool DsTrtTscBridgeDevice(
 
     std::cout << "[" << bufferCount << "]:\tdetections: " << result->elements()[0].toTensor().sizes()[0] << "\n";
 
-    if(profileFrameCount >= nextFpsFrameCount) {
+    if(profileFrameCount >= fpsFramePeriod) {
         std::chrono::duration<double> elapsed_s = std::chrono::system_clock::now() - start;
         std::cout << profileFrameCount / elapsed_s.count() << " FPS\n";
-        nextFpsFrameCount += fpsFramePeriod;
+        profileFrameCount = 0;
+        start = std::chrono::system_clock::now();
     }
 
     bufferCount += 1;
