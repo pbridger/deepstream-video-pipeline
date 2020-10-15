@@ -1,1 +1,1 @@
-# pytorch-video-pipeline
+# deepstream-video-pipeline

@@ -1,3 +1,4 @@
+import sys
 import math, itertools
 import torch, torchvision
 
@@ -37,7 +38,7 @@ def init_dboxes(device, model_dtype):
     ).clamp(0, 1)
 
 
-class FullSSD300(torch.nn.Module):
+class SSD300(torch.nn.Module):
     def __init__(self, detection_threshold, model_precision, device):
         super().__init__()
         self.device = device
@@ -47,26 +48,34 @@ class FullSSD300(torch.nn.Module):
         self.dboxes_xywh = init_dboxes(device, self.model_dtype).unsqueeze(dim=0)
         self.scale_xy = 0.1
         self.scale_wh = 0.2
+        self.inference_dims = torch.tensor([300, 300], device=device)
 
-    def forward(self, X):
-        image_batch = self.preprocess(X)
-        locs, labels = self.detector(image_batch)
-        return self.postprocess(locs, labels)
+    def preprocess(self, image_nchw):
+        '300x300 centre crop and normalize'
+        batch_dim, image_height, image_width, image_depth = image_nchw.size()
+        copy_x, copy_y = min(300, image_width), min(300, image_height)
 
-    def preprocess(self, image_batch_nhwc):
-        'normalize, NHWC -> NCHW'
-        return self.normalize(
-            image_batch.to(self.device) / 255
-        ).permute(0, 3, 1, 2).contiguous()
+#         copy_x, copy_y = torch.min(
+#             self.inference_dims,
+#             torch.tensor([image_width, image_height], device=self.device)
+#         )
 
-    def normalize(self, input_tensor):
-        'Nvidia SSD300 code uses mean and std-dev of 128/256'
-        return (2.0 * input_tensor) - 1.0
+        dest_x_offset = max(0, (300 - image_width) // 2)
+        source_x_offset = max(0, (image_width - 300) // 2)
+        dest_y_offset = max(0, (300 - image_height) // 2)
+        source_y_offset = max(0, (image_height - 300) // 2)
+
+        image_nchw = image_nchw.to(self.model_dtype)
+        input_nchw = torch.zeros((batch_dim, 3, 300, 300), dtype=self.model_dtype, device=self.device)
+        input_nchw[:, :, dest_y_offset:dest_y_offset + copy_y, dest_x_offset:dest_x_offset + copy_x] = \
+            image_nchw[:, :, source_y_offset:source_y_offset + copy_y, source_x_offset:source_x_offset + copy_x]
+
+        # Nvidia SSD300 code uses mean and std-dev of 128/256
+        return (2 * (input_nchw / 255) - 1)
 
     def xywh_to_xyxy(self, bboxes_batch, scores_batch):
         bboxes_batch = bboxes_batch.permute(0, 2, 1)
         scores_batch = scores_batch.permute(0, 2, 1)
-        return bboxes_batch, torch.nn.functional.softmax(scores_batch, dim=-1)
 
         bboxes_batch[:, :, :2] = self.scale_xy * bboxes_batch[:, :, :2]
         bboxes_batch[:, :, 2:] = self.scale_wh * bboxes_batch[:, :, 2:]
@@ -92,12 +101,15 @@ class FullSSD300(torch.nn.Module):
 
         # flatten batch and classes
         batch_dim, box_dim, class_dim = probs.size()
-        # flat_locs = locs.view(-1, 4).repeat_interleave(class_dim.cuda(), dim=0)
-        flat_box_dim = batch_dim * box_dim
-        flat_locs = locs.view(flat_box_dim, 4, 1)
-        flat_locs = flat_locs.expand(flat_box_dim, 4, class_dim)
-        flat_locs = flat_locs.flatten(1, 2)
-        flat_locs = flat_locs.view(flat_box_dim * class_dim, 4)
+
+        # Exporting the operator repeat_interleave to ONNX opset version 11 is not supported. Please open a bug to request ONNX export support for the missing operator
+        flat_locs = locs.reshape(-1, 4).repeat_interleave(torch.tensor([class_dim], device=locs.device), dim=0)
+
+#         flat_box_dim = batch_dim * box_dim
+#         flat_locs = locs.reshape(flat_box_dim, 4, 1)
+#         flat_locs = flat_locs.expand(flat_box_dim, 4, class_dim)
+#         flat_locs = flat_locs.flatten(1, 2)
+#         flat_locs = flat_locs.view(flat_box_dim * class_dim, 4)
 
         flat_probs = probs.view(-1)
         class_indexes = torch.arange(class_dim, device=self.device).repeat(batch_dim * box_dim)
@@ -121,36 +133,4 @@ class FullSSD300(torch.nn.Module):
         probs = flat_probs[nms_mask]
         class_indexes = class_indexes[nms_mask]
         return bboxes, probs, class_indexes
-
-
-if __name__ == '__main__':
-    a = torch.tensor([
-        [1, 1, 1, 1],
-        [2, 2, 2, 2],
-        [3, 3, 3, 3],
-        [4, 4, 4, 4],
-        [5, 5, 5, 5],
-    ])
-
-#     print(a.view(5, 4, 1))
-#     print(a.repeat_interleave(2, dim=0))
-#     print(a.unsqueeze(-1).expand(5, 4, 2).flatten(-2, -1).view(10, 4))
-
-    image_batch = torch.randn((1, 300, 300, 3)).cuda()
-    print(image_batch.size())
-
-    model = FullSSD300(0.4, 'fp32', torch.device('cuda'))
-
-    bboxes, *others = model(image_batch)
-    print(bboxes.size())
-
-    torch.onnx.export(
-        model,
-        image_batch,
-        'ssd300.onnx',
-        # input_names=['image_batch'],
-        # output_names=['locs', 'probs'],
-        opset_version=12
-    )
-
 
