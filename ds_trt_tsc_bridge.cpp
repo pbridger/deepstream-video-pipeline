@@ -28,6 +28,7 @@ size_t ppm_save(const at::Tensor& image_chw, const std::string& filename) {
 struct DeviceState {
     uint32_t bufferCount = 0;
     uint32_t profileFrameCount = 0;
+    uint32_t detections = 0;
     std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
     torch::Device device = torch::kCPU;
     torch::ScalarType sourceType = torch::kFloat32;
@@ -54,7 +55,7 @@ bool DsTrtTscBridgeDevice(
     std::vector<std::vector<NvDsInferObjectDetectionInfo>> &batchObjectList
 ) {
     const size_t outputLayerIndex = 0;
-    const uint32_t fpsFramePeriod = 128;
+    const uint32_t fpsFramePeriod = 64;
 
     static std::vector<DeviceState> deviceState(4);
 
@@ -74,11 +75,6 @@ bool DsTrtTscBridgeDevice(
         } else if(layer.dataType == NvDsInferDataType::INT8) {
             state.sourceType = torch::kUInt8;
         }
-    }
-
-    if(state.bufferCount == 5) {
-        state.start = std::chrono::system_clock::now();
-        state.profileFrameCount = 0;
     }
 
     at::cuda::CUDAStreamGuard streamGuard(state.stream);
@@ -101,7 +97,7 @@ bool DsTrtTscBridgeDevice(
         torch::dtype(state.sourceType).device(state.device)
     );
 
-    at::Tensor batch_nchw = source_nchw.to(state.device, torch::kFloat32, false, true).contiguous();
+    at::Tensor batch_nchw = source_nchw.to(state.device, torch::kFloat32, /*non-blocking=*/true, /*copy=*/true).contiguous();
 
     nvtxRangePop(); // setup
 
@@ -120,12 +116,14 @@ bool DsTrtTscBridgeDevice(
     ).toTuple();
     nvtxRangePop(); // inference
 
-    std::cout << gpuId << ":\t" << state.bufferCount << "]:\tdetections: " << result->elements()[0].toTensor().sizes()[0] << "\n";
+    state.detections += result->elements()[0].toTensor().sizes()[0];
+    /* std::cout << gpuId << ":\t" << state.bufferCount << "]:\tdetections: " << << "\n"; */
 
     if(state.profileFrameCount >= fpsFramePeriod) {
         std::chrono::duration<double> elapsed_s = std::chrono::system_clock::now() - state.start;
-        std::cout << gpuId << ":\t" << state.profileFrameCount / elapsed_s.count() << " FPS\n";
+        std::cout << "gpuId: " << gpuId << "\tbufferCount: " << std::setw(4) << state.bufferCount << "\tframes: " << state.profileFrameCount << "\tdetections: " << std::setw(5) << state.detections << "\tfps: " << state.profileFrameCount / elapsed_s.count() << "\n";
         state.profileFrameCount = 0;
+        state.detections = 0;
         state.start = std::chrono::system_clock::now();
     }
 

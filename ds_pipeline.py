@@ -1,25 +1,34 @@
 import sys
+import argparse
 import gi
 gi.require_version('Gst', '1.0')
 from gi.repository import Gst
 
-pipeline_name = sys.argv[1]
+p = argparse.ArgumentParser()
+p.add_argument('--name', default='default')
+p.add_argument('--buffers', default=512)
+p.add_argument('--decodebin', default=False, action='store_true')
+p.add_argument('--batch-size', default=8, type=int)
+p.add_argument('--gpus', default=1, type=int)
 
-buffers = 140
+args = p.parse_args()
+
+pipeline_cmd = ''
+for gpu_id in range(args.gpus):
+    pipeline_cmd += f'''\
+nvstreammux name=mux{gpu_id} gpu-id={gpu_id} enable-padding=1 width=300 height=300 batch-size={args.batch_size} batched-push-timeout=1000000 !
+nvinfer config-file-path=detector.config gpu-id={gpu_id} batch-size={args.batch_size} ! fakesink
+'''
+    for filesrc_id in range(args.batch_size // 2):
+        if args.decodebin:
+            pipeline_cmd += f'filesrc location=media/in.mp4 num-buffers={args.buffers} ! decodebin ! mux{gpu_id}.sink_{filesrc_id} \n'
+        else:
+            pipeline_cmd += f'filesrc location=media/in.mp4 num-buffers={args.buffers} ! qtdemux ! h264parse ! nvv4l2decoder gpu-id={gpu_id} ! mux{gpu_id}.sink_{filesrc_id} \n'
+
+print(pipeline_cmd)
 
 Gst.init()
-pipeline = Gst.parse_launch(f'''
-    nvstreammux name=mux width=384 height=288 batch-size=16 batched-push-timeout=1000000 !
-    nvinfer config-file-path=detector.config ! fakesink
-    filesrc location=media/in.mp4 num-buffers={buffers} ! decodebin !  mux.sink_0
-    filesrc location=media/in.mp4 num-buffers={buffers} ! decodebin !  mux.sink_1
-    filesrc location=media/in.mp4 num-buffers={buffers} ! decodebin !  mux.sink_2
-    filesrc location=media/in.mp4 num-buffers={buffers} ! decodebin !  mux.sink_3
-    filesrc location=media/in.mp4 num-buffers={buffers} ! decodebin !  mux.sink_4
-    filesrc location=media/in.mp4 num-buffers={buffers} ! decodebin !  mux.sink_5
-    filesrc location=media/in.mp4 num-buffers={buffers} ! decodebin !  mux.sink_6
-    filesrc location=media/in.mp4 num-buffers={buffers} ! decodebin !  mux.sink_7
-''')
+pipeline = Gst.parse_launch(pipeline_cmd)
 
 pipeline.set_state(Gst.State.PLAYING)
 
@@ -35,7 +44,7 @@ try:
             print(f'{msg.src.name}: [{msg_type}] {text}')
             break
 finally:
-    open(f'logs/{pipeline_name}.pipeline.dot', 'w').write(
+    open(f'logs/{args.name}_{args.gpus}gpu_batch{args.batch_size}.pipeline.dot', 'w').write(
         Gst.debug_bin_to_dot_data(pipeline, Gst.DebugGraphDetails.ALL)
     )
     pipeline.set_state(Gst.State.NULL)
