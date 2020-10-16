@@ -30,21 +30,21 @@ if __name__ =='__main__':
     threshold = 0.4
     model_precision = 'fp16'
 
-    image_nchw = (torch.randn((args.batch_dim, 3, args.height_dim, args.width_dim)) * 255).to(device, torch.float32)
+    image_nchw = (torch.randn((args.batch_dim, 3, args.height_dim, args.width_dim)) * 255).to(device, torch.float16)
     ssd_model = ds_ssd300.SSD300(threshold, model_precision, args.batch_dim)
     tensorrt_model = ds_trt.TensorRTPart(ssd_model).to(device)
     torchscript_model = ds_tsc.TorchScriptPart(ssd_model).to(device)
 
     # sanity test
     intermediate_result = tensorrt_model(image_nchw)
-    intermediate_result = intermediate_result[0].squeeze(0) # likely have to modify this when tensorrt_model returns two tensors
-    torchscript_model(intermediate_result)
+    intermediate_result = tuple(r.squeeze(0) for r in intermediate_result)
+    print(torchscript_model(*intermediate_result))
 
     with torch.jit.optimized_execution(should_optimize=True):
         for gpu_id in range(2):
             traced_module = torch.jit.trace(
                 torchscript_model.to(torch.device('cuda', gpu_id)),
-                intermediate_result.to(torch.device('cuda', gpu_id)),
+                tuple(r.to(torch.device('cuda', gpu_id)) for r in intermediate_result),
             )
             traced_module.save(f'checkpoints/{args.tsc_module_name}.tsc.pth.{gpu_id}')
 

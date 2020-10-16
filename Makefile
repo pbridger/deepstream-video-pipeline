@@ -2,10 +2,12 @@
 DOCKER_CMD := docker run -it --rm --gpus=all --privileged=true --ulimit core=0 --ipc=host -v $(shell pwd):/app -v $(shell pwd)/../pbinfer/pbdsinfer:/opt/nvidia/deepstream/deepstream-5.0/sources/libs/nvdsinfer
 DOCKER_PY_CMD := ${DOCKER_CMD} --entrypoint=python
 DOCKER_NSYS_CMD := ${DOCKER_CMD} --entrypoint=nsys
-PROFILE_CMD := profile -t cuda,cublas,cudnn,nvtx,osrt --force-overwrite=true --duration=30 --delay=15
+PROFILE_CMD := profile -t cuda,cublas,cudnn,nvtx,osrt --force-overwrite=true --duration=30 --delay=7
 
-.PHONY: sleep profile_pipeline_%
-.PRECIOUS: logs/ds_trt_tsc_%.qdrep
+PARSE_FUNC_NAME = DsTrtTscBridgeDevice
+
+.PHONY: sleep run_pipeline_%_1gpu run_pipeline_%_2gpu profile_pipeline_%_1gpu profile_pipeline_%_2gpu 
+.PRECIOUS: logs/ds_trt_tsc_%.qdrep checkpoints/ds_tsc_%.tsc.pth.0 checkpoints/ds_tsc_%.tsc.pth.1
 
 ### External - to be used from outside the container ###
 
@@ -50,7 +52,7 @@ checkpoints/ds_tsc_%.tsc.pth.0 checkpoints/ds_tsc_%.tsc.pth.1: export_tsc.py ds_
 
 
 checkpoints/ds_trt_%.engine: export_trt_engine.py ds_trt_%.py ds_ssd300_%.py
-	python $< --ssd-module-name=ds_ssd300_$* --trt-module-name=ds_trt_$* --batch-dim=16
+	python $< --ssd-module-name=ds_ssd300_$* --trt-module-name=ds_trt_$* --batch-dim=16 --output-names=$(shell python ds_trt_$*.py)
 
 
 build/Makefile: CMakeLists.txt
@@ -63,31 +65,57 @@ build/libds_trt_tsc_bridge.so: build/Makefile ds_trt_tsc_bridge.cpp
 	cd build && cmake --build . --config Debug
 
 
-run_pipeline_%: ds_pipeline.py checkpoints/ds_trt_%.engine checkpoints/ds_tsc_%.tsc.pth.0 checkpoints/ds_tsc_%.tsc.pth.1 build/libds_trt_tsc_bridge.so
-	DS_TSC_PTH_PATH="checkpoints/ds_tsc_1.tsc.pth." python $< --batch-size=16 --name=$* --buffers=512 --gpus=2
-
-
-debug_pipeline_%: checkpoints/ds_tsc_%.tsc.pth checkpoints/ds_trt_%.engine build/libds_trt_tsc_bridge.so
-	DS_TSC_PTH_PATH="$<" \
-    gdb --args gst-launch-1.0 nvstreammux name=mux enable-padding=1 width=300 height=300 batch-size=16 batched-push-timeout=1000000 ! \
-    nvinfer config-file-path=detector.config ! fakesink \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_0 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_1 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_2 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_3 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_4 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_5 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_6 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_7
-
-
-logs/ds_trt_tsc_%.qdrep: checkpoints/ds_trt_%.engine checkpoints/ds_tsc_%.tsc.pth.0 checkpoints/ds_tsc_%.tsc.pth.1 build/libds_trt_tsc_bridge.so
-	DS_TSC_PTH_PATH="checkpoints/ds_tsc_1.tsc.pth." nsys ${PROFILE_CMD} -o $@ python $< --batch-size=16 --name=$* --buffers=512 --gpus=2
+detector_%.config: detector.config
+	cat $< | sed 's/{engine_name}/$*/g' | sed 's/{parse_func_name}/${PARSE_FUNC_NAME}/g' >$@
 
 
 
-profile_pipeline_%: logs/ds_trt_tsc_%.qdrep
-	mv $< logs/ds_trt_$*_1gpu_batch16.qdrep
+logs/%_batch16.pipeline.dot: ds_pipeline.py checkpoints/ds_trt_%.engine checkpoints/ds_tsc_%.tsc.pth.0 checkpoints/ds_tsc_%.tsc.pth.1 build/libds_trt_tsc_bridge.so detector_$*.config
+	DS_TSC_INPUTS="$(shell python ds_trt_$*.py)" DS_TSC_PTH_PATH="checkpoints/ds_tsc_$*.tsc.pth." python $< --batch-size=16 --name=$* --buffers=512 --gpus=${GPUS}
+
+
+debug_pipeline_%: ds_pipeline.py checkpoints/ds_trt_%.engine checkpoints/ds_tsc_%.tsc.pth.0 checkpoints/ds_tsc_%.tsc.pth.1 build/libds_trt_tsc_bridge.so detector_%.config
+	DS_TSC_INPUTS="$(shell python ds_trt_$*.py)" DS_TSC_PTH_PATH="checkpoints/ds_tsc_$*.tsc.pth." gdb --args python $< --batch-size=16 --name=$* --buffers=80 --gpus=1
+
+
+logs/ds_%.qdrep: ds_pipeline.py checkpoints/ds_trt_%.engine checkpoints/ds_tsc_%.tsc.pth.0 checkpoints/ds_tsc_%.tsc.pth.1 build/libds_trt_tsc_bridge.so detector_%.config
+	DS_TSC_INPUTS="$(shell python ds_trt_$*.py)" DS_TSC_PTH_PATH="checkpoints/ds_tsc_$*.tsc.pth." nsys ${PROFILE_CMD} -o $@ python $< --batch-size=16 --name=$* --buffers=512 --gpus=${GPUS}
+
+
+run_pipeline_%_1gpu_host: GPUS=1
+run_pipeline_%_1gpu_host: PARSE_FUNC_NAME=DsTrtTscBridgeHost
+run_pipeline_%_1gpu_host: logs/%_batch16.pipeline.dot
+	mv $< logs/%_1gpu_batch16.pipeline.dot
+
+run_pipeline_%_2gpu_host: GPUS=2 PARSE_FUNC_NAME=DsTrtTscBridge
+run_pipeline_%_2gpu_host: logs/%_batch16.pipeline.dot
+	mv $< logs/%_2gpu_batch16.pipeline.dot
+
+run_pipeline_%_1gpu_device: GPUS=1
+run_pipeline_%_1gpu_device: PARSE_FUNC_NAME=DsTrtTscBridgeDevice
+run_pipeline_%_1gpu_device: logs/%_batch16.pipeline.dot
+	mv $< logs/%_1gpu_batch16.pipeline.dot
+
+run_pipeline_%_2gpu_device: GPUS=2 PARSE_FUNC_NAME=DsTrtTscBridgeDevice
+run_pipeline_%_2gpu_device: logs/%_batch16.pipeline.dot
+	mv $< logs/%_2gpu_batch16.pipeline.dot
+
+
+profile_pipeline_%_1gpu_host: GPUS=1 PARSE_FUNC_NAME=DsTrtTscBridge
+profile_pipeline_%_1gpu_host: logs/ds_%.qdrep
+	mv $< logs/ds_$*_1gpu_batch16.qdrep
+
+profile_pipeline_%_2gpu_host: GPUS=2 PARSE_FUNC_NAME=DsTrtTscBridge
+profile_pipeline_%_2gpu_host: logs/ds_%.qdrep
+	mv $< logs/ds_$*_2gpu_batch16.qdrep
+
+profile_pipeline_%_1gpu_device: GPUS=1 PARSE_FUNC_NAME=DsTrtTscBridgeDevice
+profile_pipeline_%_1gpu_device: logs/ds_%.qdrep
+	mv $< logs/ds_$*_1gpu_batch16.qdrep
+
+profile_pipeline_%_2gpu_device: GPUS="2" PARSE_FUNC_NAME=DsTrtTscBridgeDevice
+profile_pipeline_%_2gpu_device: logs/ds_%.qdrep
+	mv $< logs/ds_$*_2gpu_batch16.qdrep
 
 
 sleep:

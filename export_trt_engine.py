@@ -13,12 +13,13 @@ def parse_args():
     a.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
     a.add_argument('--ssd-module-name', type=str)
     a.add_argument('--trt-module-name', type=str)
-    a.add_argument('--output-names', default=['image_nchw_out'])
+    a.add_argument('--output-names', default='out')
     return a.parse_args()
 
 
 if __name__ =='__main__':
     args = parse_args()
+    args.output_names = args.output_names.split(',')
 
     ds_ssd300 = importlib.import_module(args.ssd_module_name)
     ds_trt = importlib.import_module(args.trt_module_name)
@@ -32,7 +33,7 @@ if __name__ =='__main__':
     model_precision = 'fp16'
 
     image_nchw = (torch.randn((args.batch_dim, 3, args.height_dim, args.width_dim)) * 255).to(device, torch.float32)
-    tensorrt_model = ds_trt.TensorRTPart(ds_ssd300.SSD300(threshold, model_precision, args.batch_dim))
+    tensorrt_model = ds_trt.TensorRTPart(ds_ssd300.SSD300(threshold, model_precision, args.batch_dim)).to(device)
 
     # sanity test
     tensorrt_model(image_nchw)
@@ -51,6 +52,7 @@ if __name__ =='__main__':
             'trtexec',
             f'--onnx={onnx_path}',
             f'--saveEngine={dest_path}',
+            '--fp16',
             '--explicitBatch',
             f'--minShapes=image_nchw:1x3x{args.height_dim}x{args.width_dim}',
             f'--optShapes=image_nchw:{args.batch_dim}x3x{args.height_dim}x{args.width_dim}',

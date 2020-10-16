@@ -17,7 +17,7 @@ pipeline_cmd = ''
 for gpu_id in range(args.gpus):
     pipeline_cmd += f'''\
 nvstreammux name=mux{gpu_id} gpu-id={gpu_id} enable-padding=1 width=300 height=300 batch-size={args.batch_size} batched-push-timeout=1000000 !
-nvinfer config-file-path=detector.config gpu-id={gpu_id} batch-size={args.batch_size} ! fakesink
+nvinfer config-file-path=detector_{args.name}.config gpu-id={gpu_id} batch-size={args.batch_size} ! fakesink
 '''
     for filesrc_id in range(args.batch_size // 2):
         if args.decodebin:
@@ -44,7 +44,7 @@ try:
             print(f'{msg.src.name}: [{msg_type}] {text}')
             break
 finally:
-    open(f'logs/{args.name}_{args.gpus}gpu_batch{args.batch_size}.pipeline.dot', 'w').write(
+    open(f'logs/{args.name}_batch{args.batch_size}.pipeline.dot', 'w').write(
         Gst.debug_bin_to_dot_data(pipeline, Gst.DebugGraphDetails.ALL)
     )
     pipeline.set_state(Gst.State.NULL)
