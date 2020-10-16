@@ -2,7 +2,7 @@
 DOCKER_CMD := docker run -it --rm --gpus=all --privileged=true --ulimit core=0 --ipc=host -v $(shell pwd):/app -v $(shell pwd)/../pbinfer/pbdsinfer:/opt/nvidia/deepstream/deepstream-5.0/sources/libs/nvdsinfer
 DOCKER_PY_CMD := ${DOCKER_CMD} --entrypoint=python
 DOCKER_NSYS_CMD := ${DOCKER_CMD} --entrypoint=nsys
-PROFILE_CMD := profile -t cuda,cublas,cudnn,nvtx,osrt --force-overwrite=true --duration=30
+PROFILE_CMD := profile -t cuda,cublas,cudnn,nvtx,osrt --force-overwrite=true --duration=30 --delay=15
 
 .PHONY: sleep profile_pipeline_%
 .PRECIOUS: logs/ds_trt_tsc_%.qdrep
@@ -63,33 +63,33 @@ build/libds_trt_tsc_bridge.so: build/Makefile ds_trt_tsc_bridge.cpp
 	cd build && cmake --build . --config Debug
 
 
-run_pipeline_%: checkpoints/ds_tsc_%.tsc.pth checkpoints/ds_trt_%.engine build/libds_trt_tsc_bridge.so
-	DS_TSC_PTH_PATH="$<" gst-launch-1.0 \
-    nvstreammux name=mux gpu-id=0 width=384 height=288 batch-size=16 batched-push-timeout=1000000 ! \
+run_pipeline_%: checkpoints/ds_trt_%.engine build/libds_trt_tsc_bridge.so
+	DS_TSC_PTH_PATH="checkpoints/ds_tsc_1.tsc.pth." gst-launch-1.0 \
+    nvstreammux name=mux gpu-id=0 enable-padding=1 width=300 height=300 batch-size=16 batched-push-timeout=1000000 ! \
     nvinfer config-file-path=detector.config gpu-id=0 ! fakesink \
-    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux.sink_0 \
-    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux.sink_1 \
-    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux.sink_2 \
-    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux.sink_3 \
-    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux.sink_4 \
-    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux.sink_5 \
-    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux.sink_6 \
-    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux.sink_7 \
-	nvstreammux name=mux2 gpu-id=1 width=384 height=288 batch-size=16 batched-push-timeout=1000000 ! \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=0 !  mux.sink_0 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=0 !  mux.sink_1 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=0 !  mux.sink_2 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=0 !  mux.sink_3 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=0 !  mux.sink_4 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=0 !  mux.sink_5 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=0 !  mux.sink_6 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=0 !  mux.sink_7 \
+    nvstreammux name=mux2 gpu-id=1 enable-padding=1 width=300 height=300 batch-size=16 batched-push-timeout=1000000 ! \
     nvinfer config-file-path=detector.config gpu-id=1 ! fakesink \
-    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux2.sink_0 \
-    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux2.sink_1 \
-    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux2.sink_2 \
-    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux2.sink_3 \
-    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux2.sink_4 \
-    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux2.sink_5 \
-    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux2.sink_6 \
-    filesrc location=media/in.mp4 num-buffers=256 ! decodebin !  mux2.sink_7
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=1 !  mux2.sink_0 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=1 !  mux2.sink_1 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=1 !  mux2.sink_2 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=1 !  mux2.sink_3 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=1 !  mux2.sink_4 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=1 !  mux2.sink_5 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=1 !  mux2.sink_6 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=1 !  mux2.sink_7
 
 
 debug_pipeline_%: checkpoints/ds_tsc_%.tsc.pth checkpoints/ds_trt_%.engine build/libds_trt_tsc_bridge.so
 	DS_TSC_PTH_PATH="$<" \
-    gdb --args gst-launch-1.0 nvstreammux name=mux width=384 height=288 batch-size=16 batched-push-timeout=1000000 ! \
+    gdb --args gst-launch-1.0 nvstreammux name=mux enable-padding=1 width=300 height=300 batch-size=16 batched-push-timeout=1000000 ! \
     nvinfer config-file-path=detector.config ! fakesink \
     filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_0 \
     filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_1 \
@@ -100,18 +100,28 @@ debug_pipeline_%: checkpoints/ds_tsc_%.tsc.pth checkpoints/ds_trt_%.engine build
     filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_6 \
     filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_7
 
-logs/ds_trt_tsc_%.qdrep: checkpoints/ds_tsc_%.tsc.pth checkpoints/ds_trt_%.engine build/libds_trt_tsc_bridge.so
-	DS_TSC_PTH_PATH="$<" nsys ${PROFILE_CMD} -o $@ \
-    gst-launch-1.0 nvstreammux name=mux width=384 height=288 batch-size=16 batched-push-timeout=1000000 ! \
-    nvinfer config-file-path=detector.config ! fakesink \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_0 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_1 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_2 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_3 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_4 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_5 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_6 \
-    filesrc location=media/in.mp4 num-buffers=140 ! decodebin !  mux.sink_7
+logs/ds_trt_tsc_%.qdrep: checkpoints/ds_trt_%.engine build/libds_trt_tsc_bridge.so
+	DS_TSC_PTH_PATH="checkpoints/ds_tsc_1.tsc.pth." nsys ${PROFILE_CMD} -o $@ gst-launch-1.0 \
+    nvstreammux name=mux gpu-id=0 enable-padding=1 width=300 height=300 batch-size=16 batched-push-timeout=1000000 ! \
+    nvinfer config-file-path=detector.config gpu-id=0 ! fakesink \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=0 !  mux.sink_0 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=0 !  mux.sink_1 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=0 !  mux.sink_2 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=0 !  mux.sink_3 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=0 !  mux.sink_4 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=0 !  mux.sink_5 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=0 !  mux.sink_6 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=0 !  mux.sink_7 \
+    nvstreammux name=mux2 gpu-id=1 enable-padding=1 width=300 height=300 batch-size=16 batched-push-timeout=1000000 ! \
+    nvinfer config-file-path=detector.config gpu-id=1 ! fakesink \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=1 !  mux2.sink_0 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=1 !  mux2.sink_1 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=1 !  mux2.sink_2 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=1 !  mux2.sink_3 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=1 !  mux2.sink_4 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=1 !  mux2.sink_5 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=1 !  mux2.sink_6 \
+    filesrc location=media/in.mp4 num-buffers=512 ! qtdemux ! h264parse ! nvv4l2decoder gpu-id=1 !  mux2.sink_7
 
 
 profile_pipeline_%: logs/ds_trt_tsc_%.qdrep

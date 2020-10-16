@@ -63,8 +63,8 @@ bool DsTrtTscBridgeDevice(
 
     if(state.device == torch::Device(torch::kCPU)) {
         state.device = torch::Device(torch::kCUDA, gpuId);
-        /* state.stream = at::cuda::getStreamFromPool(); */
-        state.model = torch::jit::load(std::getenv("DS_TSC_PTH_PATH"));
+        state.stream = at::cuda::getStreamFromPool(true, gpuId);
+        state.model = torch::jit::load(std::getenv("DS_TSC_PTH_PATH") + std::to_string(gpuId));
         state.model.to(state.device);
         state.start = std::chrono::system_clock::now();
 
@@ -91,7 +91,7 @@ bool DsTrtTscBridgeDevice(
 
     if(dims[0] != batchDim) {
         nvtxRangePop(); // setup
-        // onnx export cannot handle dynamic batch dimension just yet
+        // torchscript export cannot handle dynamic batch dimension just yet
         return true;
     }
 
@@ -105,12 +105,12 @@ bool DsTrtTscBridgeDevice(
 
     nvtxRangePop(); // setup
 
-/*         if(bufferCount == 57) { */
+/*         if(state.bufferCount == (gpuId * 5)) { */
 /*             at::Tensor batch_cpu = batch_nchw.to(torch::kCPU); */
 /*             /1* std::cout << "batch bytes min/max/mean:\n" << batch_cpu.min() << "\n" << batch_cpu.max() << "\n" << batch_cpu.to(torch::kFloat32).mean() << "\n"; *1/ */
 /*             /1* std::cout << batch_cpu.sizes() << "\n"; *1/ */
 /*             for(unsigned int i = 0; i < batch_cpu.sizes()[0]; ++i) { */
-/*                 ppm_save(batch_cpu.slice(0, i, i + 1).squeeze(0), "logs/test_" + std::to_string(bufferCount) + "_" + std::to_string(i) + ".ppm"); */
+/*                 ppm_save(batch_cpu.slice(0, i, i + 1).squeeze(0), "logs/test_" + std::to_string(state.bufferCount) + "_" + std::to_string(i) + ".ppm"); */
 /*             } */
 /*         } */
 
@@ -120,11 +120,11 @@ bool DsTrtTscBridgeDevice(
     ).toTuple();
     nvtxRangePop(); // inference
 
-    std::cout << "[" << state.bufferCount << "]:\tdetections: " << result->elements()[0].toTensor().sizes()[0] << "\n";
+    std::cout << gpuId << ":\t" << state.bufferCount << "]:\tdetections: " << result->elements()[0].toTensor().sizes()[0] << "\n";
 
     if(state.profileFrameCount >= fpsFramePeriod) {
         std::chrono::duration<double> elapsed_s = std::chrono::system_clock::now() - state.start;
-        std::cout << state.profileFrameCount / elapsed_s.count() << " FPS\n";
+        std::cout << gpuId << ":\t" << state.profileFrameCount / elapsed_s.count() << " FPS\n";
         state.profileFrameCount = 0;
         state.start = std::chrono::system_clock::now();
     }
