@@ -7,8 +7,8 @@ class TorchScriptPart(torch.nn.Module):
         super().__init__()
         self.ssd_module = ssd_module
 
-    def forward(self, image_nchw):
-        image_batch = self.ssd_module.preprocess(image_nchw)
+    def forward(self, image_chw):
+        image_batch = self.ssd_module.preprocess(image_chw.unsqueeze(0))
         locs, labels = self.ssd_module.detector(image_batch)
         return self.ssd_module.postprocess(locs, labels)
 

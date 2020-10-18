@@ -6,6 +6,7 @@ class TensorRTPart(torch.nn.Module):
     def __init__(self, ssd_module):
         super().__init__()
         self.ssd_module = ssd_module
+        self.creates_dummy_dim = True
 
     def forward(self, image_nchw):
         image_batch = self.ssd_module.preprocess(image_nchw)

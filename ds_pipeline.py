@@ -17,7 +17,7 @@ pipeline_cmd = ''
 for gpu_id in range(args.gpus):
     pipeline_cmd += f'''\
 nvstreammux name=mux{gpu_id} gpu-id={gpu_id} enable-padding=1 width=300 height=300 batch-size={args.batch_size} batched-push-timeout=1000000 !
-nvinfer config-file-path=detector_{args.name}.config gpu-id={gpu_id} batch-size={args.batch_size} ! fakesink
+nvinfer config-file-path=detector_{args.name}.config gpu-id={gpu_id} batch-size={args.batch_size} ! fakesink enable-last-sample=0
 '''
     for filesrc_id in range(args.batch_size // 2):
         if args.decodebin:

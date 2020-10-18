@@ -31,13 +31,19 @@ if __name__ =='__main__':
     model_precision = 'fp16'
 
     image_nchw = (torch.randn((args.batch_dim, 3, args.height_dim, args.width_dim)) * 255).to(device, torch.float16)
-    ssd_model = ds_ssd300.SSD300(threshold, model_precision, args.batch_dim)
-    tensorrt_model = ds_trt.TensorRTPart(ssd_model).to(device)
-    torchscript_model = ds_tsc.TorchScriptPart(ssd_model).to(device)
+    tensorrt_model = ds_trt.TensorRTPart(ds_ssd300.SSD300(threshold, model_precision, args.batch_dim)).to(device)
 
     # sanity test
     intermediate_result = tensorrt_model(image_nchw)
-    intermediate_result = tuple(r.squeeze(0) for r in intermediate_result)
+    if tensorrt_model.creates_dummy_dim:
+        intermediate_result = tuple(r.squeeze(0) for r in intermediate_result)
+        tsc_batch_dim = args.batch_dim
+    else:
+        intermediate_result = tuple(r[0] for r in intermediate_result)
+        tsc_batch_dim = 1
+
+    torchscript_model = ds_tsc.TorchScriptPart(ds_ssd300.SSD300(threshold, model_precision, tsc_batch_dim)).to(device)
+
     print(torchscript_model(*intermediate_result))
 
     with torch.jit.optimized_execution(should_optimize=True):

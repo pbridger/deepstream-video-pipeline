@@ -114,7 +114,6 @@ class SSD300(torch.nn.Module):
             flat_probs = flat_probs[threshold_mask]
             class_indexes = self.class_indexes[threshold_mask]
             image_indexes = self.image_indexes[threshold_mask]
-            return flat_locs, flat_probs
 
             nms_mask = torchvision.ops.boxes.batched_nms(
                 flat_locs,

@@ -36,7 +36,10 @@ if __name__ =='__main__':
     tensorrt_model = ds_trt.TensorRTPart(ds_ssd300.SSD300(threshold, model_precision, args.batch_dim)).to(device)
 
     # sanity test
-    tensorrt_model(image_nchw)
+    result = tensorrt_model(image_nchw)
+    num_result_dims = len(result[0].size())
+    result_includes_dummy = num_result_dims == 5
+    batch_dim_num = 1 if result_includes_dummy else 0
 
     torch.onnx.export(
         tensorrt_model,
@@ -44,7 +47,7 @@ if __name__ =='__main__':
         onnx_path,
         input_names=['image_nchw'],
         output_names=args.output_names,
-        dynamic_axes={'image_nchw': {0: 'batch_dim'}, **{o: {1: 'batch_dim'} for o in args.output_names}},
+        dynamic_axes={'image_nchw': {0: 'batch_dim'}, **{o: {batch_dim_num: 'batch_dim'} for o in args.output_names}},
         opset_version=11
     )
 
@@ -61,10 +64,9 @@ if __name__ =='__main__':
         ],
         shell=False,
         check=True,
-        capture_output=True,
+        # capture_output=True,
         text=True
     )
-            # f'--shapes=image_nchw:1x3x{args.height_dim}x{args.width_dim}',
 
     print(trt_output.args)
     print(trt_output.stdout)

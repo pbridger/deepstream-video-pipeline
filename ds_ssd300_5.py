@@ -104,7 +104,14 @@ class SSD300(torch.nn.Module):
 
             # flatten batch and classes
             # Exporting the operator repeat_interleave to ONNX opset version 11 is not supported.
-            flat_locs = locs.reshape(-1, 4).repeat_interleave(self.class_dim_tensor, dim=0)
+            # flat_locs = locs.reshape(-1, 4).repeat_interleave(self.class_dim_tensor, dim=0)
+
+            flat_box_dim = self.batch_dim * self.box_dim
+            flat_locs = locs.reshape(flat_box_dim, 4, 1)
+            flat_locs = flat_locs.expand(flat_box_dim, 4, self.class_dim)
+            flat_locs = flat_locs.flatten(1, 2)
+            flat_locs = flat_locs.view(flat_box_dim * self.class_dim, 4)
+
             flat_probs = probs.view(-1)
 
             # only do NMS on detections over threshold, and ignore background (0)

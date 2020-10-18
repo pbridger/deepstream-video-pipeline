@@ -4,16 +4,17 @@ DOCKER_PY_CMD := ${DOCKER_CMD} --entrypoint=python
 DOCKER_NSYS_CMD := ${DOCKER_CMD} --entrypoint=nsys
 PROFILE_CMD := profile -t cuda,cublas,cudnn,nvtx,osrt --force-overwrite=true --duration=30 --delay=7
 
+NUM_BUFFERS=512
 PARSE_FUNC_NAME = DsTrtTscBridgeDevice
 
-.PHONY: sleep run_pipeline_%_1gpu run_pipeline_%_2gpu profile_pipeline_%_1gpu profile_pipeline_%_2gpu 
-.PRECIOUS: logs/ds_trt_tsc_%.qdrep checkpoints/ds_tsc_%.tsc.pth.0 checkpoints/ds_tsc_%.tsc.pth.1
+.PHONY: sleep debug_pipeline_%_1gpu_host debug_pipeline_%_1gpu_device 
+.PRECIOUS: checkpoints/ds_tsc_%.tsc.pth.0 checkpoints/ds_tsc_%.tsc.pth.1 checkpoints/ds_trt_%.engine
 
 ### External - to be used from outside the container ###
 
 
 build-container: docker/Dockerfile
-	docker build -f $< -t deepstream-video-pipeline:latest .
+	docker build --no-cache -f $< -t deepstream-video-pipeline:latest .
 
 
 run-container: #build-container
@@ -70,52 +71,74 @@ detector_%.config: detector.config
 
 
 
-logs/%_batch16.pipeline.dot: ds_pipeline.py checkpoints/ds_trt_%.engine checkpoints/ds_tsc_%.tsc.pth.0 checkpoints/ds_tsc_%.tsc.pth.1 build/libds_trt_tsc_bridge.so detector_$*.config
-	DS_TSC_INPUTS="$(shell python ds_trt_$*.py)" DS_TSC_PTH_PATH="checkpoints/ds_tsc_$*.tsc.pth." python $< --batch-size=16 --name=$* --buffers=512 --gpus=${GPUS}
+logs/%_batch16.pipeline.dot: ds_pipeline.py checkpoints/ds_trt_%.engine checkpoints/ds_tsc_%.tsc.pth.0 checkpoints/ds_tsc_%.tsc.pth.1 build/libds_trt_tsc_bridge.so detector_%.config
+	cat detector_$*.config
+	DS_TSC_INPUTS="$(shell python ds_trt_$*.py)" DS_TSC_PTH_PATH="checkpoints/ds_tsc_$*.tsc.pth." python $< --batch-size=16 --name=$* --buffers=${NUM_BUFFERS} --gpus=${GPUS}
+	rm detector_$*.config
 
 
 debug_pipeline_%: ds_pipeline.py checkpoints/ds_trt_%.engine checkpoints/ds_tsc_%.tsc.pth.0 checkpoints/ds_tsc_%.tsc.pth.1 build/libds_trt_tsc_bridge.so detector_%.config
 	DS_TSC_INPUTS="$(shell python ds_trt_$*.py)" DS_TSC_PTH_PATH="checkpoints/ds_tsc_$*.tsc.pth." gdb --args python $< --batch-size=16 --name=$* --buffers=80 --gpus=1
+	rm detector_$*.config
 
 
-logs/ds_%.qdrep: ds_pipeline.py checkpoints/ds_trt_%.engine checkpoints/ds_tsc_%.tsc.pth.0 checkpoints/ds_tsc_%.tsc.pth.1 build/libds_trt_tsc_bridge.so detector_%.config
-	DS_TSC_INPUTS="$(shell python ds_trt_$*.py)" DS_TSC_PTH_PATH="checkpoints/ds_tsc_$*.tsc.pth." nsys ${PROFILE_CMD} -o $@ python $< --batch-size=16 --name=$* --buffers=512 --gpus=${GPUS}
+logs/ds_%.qdrep: ds_pipeline.py checkpoints/ds_trt_%.engine checkpoints/ds_tsc_%.tsc.pth.0 checkpoints/ds_tsc_%.tsc.pth.1 build/libds_trt_tsc_bridge.so detector_%.config detector_%.config
+	cat detector_$*.config
+	DS_TSC_INPUTS="$(shell python ds_trt_$*.py)" DS_TSC_PTH_PATH="checkpoints/ds_tsc_$*.tsc.pth." nsys ${PROFILE_CMD} -o $@ python $< --batch-size=16 --name=$* --buffers=${NUM_BUFFERS} --gpus=${GPUS}
+	rm detector_$*.config
 
 
 run_pipeline_%_1gpu_host: GPUS=1
 run_pipeline_%_1gpu_host: PARSE_FUNC_NAME=DsTrtTscBridgeHost
+run_pipeline_%_1gpu_host: NUM_BUFFERS=256
 run_pipeline_%_1gpu_host: logs/%_batch16.pipeline.dot
-	mv $< logs/%_1gpu_batch16.pipeline.dot
+	mv $< logs/ds_$*_1gpu_batch16_host.pipeline.dot
 
-run_pipeline_%_2gpu_host: GPUS=2 PARSE_FUNC_NAME=DsTrtTscBridge
+run_pipeline_%_2gpu_host: GPUS=2
+run_pipeline_%_2gpu_host: PARSE_FUNC_NAME=DsTrtTscBridgeHost
+run_pipeline_%_2gpu_host: NUM_BUFFERS=256
 run_pipeline_%_2gpu_host: logs/%_batch16.pipeline.dot
-	mv $< logs/%_2gpu_batch16.pipeline.dot
+	mv $< logs/ds_$*_2gpu_batch16_host.pipeline.dot
 
 run_pipeline_%_1gpu_device: GPUS=1
 run_pipeline_%_1gpu_device: PARSE_FUNC_NAME=DsTrtTscBridgeDevice
 run_pipeline_%_1gpu_device: logs/%_batch16.pipeline.dot
-	mv $< logs/%_1gpu_batch16.pipeline.dot
+	mv $< logs/ds_$*_1gpu_batch16_device.pipeline.dot
 
-run_pipeline_%_2gpu_device: GPUS=2 PARSE_FUNC_NAME=DsTrtTscBridgeDevice
+run_pipeline_%_2gpu_device: GPUS=2
+run_pipeline_%_2gpu_device: PARSE_FUNC_NAME=DsTrtTscBridgeDevice
 run_pipeline_%_2gpu_device: logs/%_batch16.pipeline.dot
-	mv $< logs/%_2gpu_batch16.pipeline.dot
+	mv $< logs/ds_$*_2gpu_batch16_device.pipeline.dot
 
 
-profile_pipeline_%_1gpu_host: GPUS=1 PARSE_FUNC_NAME=DsTrtTscBridge
+debug_pipeline_%_1gpu_host: PARSE_FUNC_NAME=DsTrtTscBridgeHost
+debug_pipeline_%_1gpu_host: debug_pipeline_%
+
+debug_pipeline_%_1gpu_device: PARSE_FUNC_NAME=DsTrtTscBridgeDevice
+debug_pipeline_%_1gpu_device: debug_pipeline_%
+
+
+profile_pipeline_%_1gpu_host: GPUS=1
+profile_pipeline_%_1gpu_host: PARSE_FUNC_NAME=DsTrtTscBridgeHost
+profile_pipeline_%_1gpu_host: NUM_BUFFERS=256
 profile_pipeline_%_1gpu_host: logs/ds_%.qdrep
-	mv $< logs/ds_$*_1gpu_batch16.qdrep
+	mv $< logs/ds_$*_1gpu_batch16_host.qdrep
 
-profile_pipeline_%_2gpu_host: GPUS=2 PARSE_FUNC_NAME=DsTrtTscBridge
+profile_pipeline_%_2gpu_host: GPUS=2
+profile_pipeline_%_2gpu_host: PARSE_FUNC_NAME=DsTrtTscBridgeHost
+profile_pipeline_%_2gpu_host: NUM_BUFFERS=256
 profile_pipeline_%_2gpu_host: logs/ds_%.qdrep
-	mv $< logs/ds_$*_2gpu_batch16.qdrep
+	mv $< logs/ds_$*_2gpu_batch16_host.qdrep
 
-profile_pipeline_%_1gpu_device: GPUS=1 PARSE_FUNC_NAME=DsTrtTscBridgeDevice
+profile_pipeline_%_1gpu_device: GPUS=1
+profile_pipeline_%_1gpu_device: PARSE_FUNC_NAME=DsTrtTscBridgeDevice
 profile_pipeline_%_1gpu_device: logs/ds_%.qdrep
-	mv $< logs/ds_$*_1gpu_batch16.qdrep
+	mv $< logs/ds_$*_1gpu_batch16_device.qdrep
 
-profile_pipeline_%_2gpu_device: GPUS="2" PARSE_FUNC_NAME=DsTrtTscBridgeDevice
+profile_pipeline_%_2gpu_device: GPUS=2
+profile_pipeline_%_2gpu_device: PARSE_FUNC_NAME=DsTrtTscBridgeDevice
 profile_pipeline_%_2gpu_device: logs/ds_%.qdrep
-	mv $< logs/ds_$*_2gpu_batch16.qdrep
+	mv $< logs/ds_$*_2gpu_batch16_device.qdrep
 
 
 sleep:
